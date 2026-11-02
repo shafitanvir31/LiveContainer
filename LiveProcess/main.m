@@ -45,12 +45,26 @@ int LiveProcessMain(int argc, char *argv[]) {
     // Check if we received a request to execute a custom payload
     NSString *customPayloadDylib = appInfo[@"customPayloadDylib"];
     if(customPayloadDylib) {
+        // The payload may live in LiveContainer's Documents (e.g. a guest app's framework), which we can't read without its bookmark
+        for(NSData *bookmark in appInfo[@"bookmarks"]) {
+            bool isStale = false;
+            NSURL *url = [NSURL URLByResolvingBookmarkData:bookmark options:0 relativeToURL:nil bookmarkDataIsStale:&isStale error:nil];
+            [url startAccessingSecurityScopedResource];
+        }
+
         void *handle = dlopen(customPayloadDylib.fileSystemRepresentation, RTLD_LAZY);
-        NSCAssert(appInfo, @"Failed to load custom payload dylib at path: %@", customPayloadDylib);
-        
+        if(!handle) {
+            NSLog(@"Failed to load custom payload dylib at path: %@: %s", customPayloadDylib, dlerror());
+            return 1;
+        }
+
         NSString *customPayloadEntry = appInfo[@"customPayloadEntry"];
         NSCAssert(customPayloadEntry, @"Missing customPayloadEntry");
         int (*payloadEntry)(int, char **, char **, char **) = dlsym(handle, customPayloadEntry.UTF8String);
+        if(!payloadEntry) {
+            NSLog(@"Failed to find custom payload entry %@: %s", customPayloadEntry, dlerror());
+            return 1;
+        }
         return payloadEntry(argc, argv, _envp, _apple);
     }
     
